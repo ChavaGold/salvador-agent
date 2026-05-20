@@ -13,7 +13,7 @@ DATABASE = os.getenv("DATABASE_URL", "postgresql://usuario_crm:password@proyecto
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Inicializar cliente Anthropic
-client = Anthropic()
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # Herramientas disponibles para Claude
 TOOLS = [
