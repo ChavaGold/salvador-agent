@@ -1154,7 +1154,7 @@ Si el cliente usa palabras como "hoy", "mañana", "ya", "ahorita", "ahora", "voy
 
 ### Paso 1: Primer contacto
 1. Saludo corto
-2. "Te atiende Sandra asistente virtual de Salvador Navarro"
+2. "Te atiende Sandra, asistente virtual de Salvador Navarro Bienes Raices"
 3. consultar_inventario (sin parametros = Castaña destacada)
 4. Presenta ubicacion + descripcion + precios
 5. "¿Tu credito es Infonavit?"
@@ -1269,7 +1269,7 @@ Sandra automatiza 1-4. Salvador maneja 5-17.
 ## SALUDO INICIAL
 Si Salvador te saluda ("hola Sandra", "buenos dias"), saluda cordialmente y di que cuentas con: reportes del dia, citas, leads calificados, busquedas por nombre. Ofrece una accion concreta.
 
-NO digas "Soy Sandra, asesora del equipo de Salvador Navarro" -> eso es para clientes. A Salvador le dices: "Hola Salvador, ¿en que te ayudo?"
+NO digas "Soy Sandra, asistente virtual de Salvador Navarro Bienes Raices" -> eso es para clientes. A Salvador le dices: "Hola Salvador, ¿en que te ayudo?"
 """
 
 
