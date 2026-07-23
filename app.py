@@ -1,5 +1,5 @@
 """
-Sandra V2.2 - Agente Inmobiliario y Asistente Personal de Salvador Navarro
+Sandra V2.3 - Agente Inmobiliario y Asistente Personal de Salvador Navarro
 Maneja dos modos:
   - MODO AGENTE: conversaciones con clientes potenciales de Castana
   - MODO ASISTENTE: conversaciones con Salvador (le da reportes, recibe notificaciones)
@@ -10,6 +10,12 @@ Cambios V2.2:
   - Eliminada notificacion spam de mensajes no clasificados
   - Endpoint /pausar-manual para workflow de pausa
   - Endpoint /reanudar-sandra para workflow de reanudacion
+
+Cambios V2.3:
+  - Nuevo modulo Expedientes Infonavit (tablas expediente_clientes,
+    expediente_documentos_catalogo, expediente_documentos_estatus)
+  - Tool consultar_estatus_expediente: Salvador pregunta avance de un cliente
+  - Tool marcar_documento_recibido: Salvador marca un documento como recibido por WhatsApp
 """
 from flask import Flask, request, jsonify
 from anthropic import Anthropic
@@ -606,6 +612,29 @@ TOOLS_ASISTENTE = [
                 "telefono": {"type": "string", "description": "Numero a desbloquear (cualquier formato)"}
             },
             "required": ["telefono"]
+        }
+    },
+    {
+        "name": "consultar_estatus_expediente",
+        "description": "Consulta el avance del expediente Infonavit de un cliente: cuantos de los 17 documentos tiene completos y cuales le faltan. Usar cuando Salvador pida 'estatus del expediente de X', 'que le falta a X', etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_cliente": {"type": "string", "description": "Nombre o parte del nombre del cliente"}
+            },
+            "required": ["nombre_cliente"]
+        }
+    },
+    {
+        "name": "marcar_documento_recibido",
+        "description": "Marca un documento del checklist de expediente Infonavit como recibido para un cliente. Usar cuando Salvador diga 'ya tengo el CURP de X', 'recibido el RNOA de X', 'sube el acta de X', etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nombre_cliente": {"type": "string", "description": "Nombre o parte del nombre del cliente"},
+                "documento": {"type": "string", "description": "Nombre o palabra clave del documento (ej: CURP, INE, acta, RNOA, CSF, recibo nomina, precalificacion)"}
+            },
+            "required": ["nombre_cliente", "documento"]
         }
     }
 ]
@@ -1271,6 +1300,111 @@ def tool_ver_precios_castana():
 
 
 # =====================================================================
+# TOOLS EXPEDIENTES INFONAVIT
+# =====================================================================
+def tool_consultar_estatus_expediente(nombre_cliente):
+    conn = get_db_connection()
+    if not conn:
+        return {"error": "BD no disponible"}
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT id, nombre_cliente, estatus_general
+            FROM expediente_clientes
+            WHERE LOWER(nombre_cliente) LIKE LOWER(%s)
+            LIMIT 5
+        """, (f"%{nombre_cliente}%",))
+        clientes = cur.fetchall()
+        if not clientes:
+            cur.close()
+            conn.close()
+            return {"encontrado": False, "mensaje": f"No encontre ningun cliente que coincida con '{nombre_cliente}'"}
+        if len(clientes) > 1:
+            cur.close()
+            conn.close()
+            return {
+                "encontrado": False,
+                "ambiguo": True,
+                "mensaje": f"Encontre {len(clientes)} clientes que coinciden con '{nombre_cliente}', se mas especifico",
+                "coincidencias": [c["nombre_cliente"] for c in clientes]
+            }
+        cliente = clientes[0]
+        cur.execute("""
+            SELECT c.id as documento_id, c.nombre, COALESCE(e.estatus, 'pendiente') as estatus
+            FROM expediente_documentos_catalogo c
+            LEFT JOIN expediente_documentos_estatus e
+                ON e.documento_id = c.id AND e.cliente_id = %s
+            ORDER BY c.id
+        """, (cliente["id"],))
+        docs = cur.fetchall()
+        cur.close()
+        conn.close()
+        completos = [d for d in docs if d["estatus"] in ("recibido", "validado")]
+        faltantes = [d for d in docs if d["estatus"] not in ("recibido", "validado")]
+        return {
+            "encontrado": True,
+            "cliente": cliente["nombre_cliente"],
+            "estatus_general": cliente["estatus_general"],
+            "avance": f"{len(completos)}/{len(docs)}",
+            "documentos_faltantes": [d["nombre"] for d in faltantes]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_marcar_documento_recibido(nombre_cliente, documento):
+    conn = get_db_connection()
+    if not conn:
+        return {"error": "BD no disponible"}
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT id, nombre_cliente FROM expediente_clientes
+            WHERE LOWER(nombre_cliente) LIKE LOWER(%s)
+            LIMIT 5
+        """, (f"%{nombre_cliente}%",))
+        clientes = cur.fetchall()
+        if not clientes:
+            cur.close()
+            conn.close()
+            return {"exito": False, "mensaje": f"No encontre cliente '{nombre_cliente}'"}
+        if len(clientes) > 1:
+            cur.close()
+            conn.close()
+            return {
+                "exito": False,
+                "ambiguo": True,
+                "mensaje": f"Encontre {len(clientes)} clientes que coinciden con '{nombre_cliente}', se mas especifico",
+                "coincidencias": [c["nombre_cliente"] for c in clientes]
+            }
+        cliente = clientes[0]
+
+        cur.execute("""
+            SELECT id, nombre FROM expediente_documentos_catalogo
+            WHERE LOWER(nombre) LIKE LOWER(%s)
+            LIMIT 1
+        """, (f"%{documento}%",))
+        doc = cur.fetchone()
+        if not doc:
+            cur.close()
+            conn.close()
+            return {"exito": False, "mensaje": f"No reconozco el documento '{documento}'. Revisa el nombre en el catalogo de 17 documentos."}
+
+        cur.execute("""
+            INSERT INTO expediente_documentos_estatus (cliente_id, documento_id, estatus, origen, fecha_actualizacion)
+            VALUES (%s, %s, 'recibido', 'whatsapp', now())
+            ON CONFLICT (cliente_id, documento_id)
+            DO UPDATE SET estatus = 'recibido', origen = 'whatsapp', fecha_actualizacion = now()
+        """, (cliente["id"], doc["id"]))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"exito": True, "cliente": cliente["nombre_cliente"], "documento": doc["nombre"]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# =====================================================================
 # DISPATCHER
 # =====================================================================
 def procesar_herramienta(nombre, params, contexto_usuario=None, contexto_conversation_id=None):
@@ -1371,6 +1505,14 @@ def procesar_herramienta(nombre, params, contexto_usuario=None, contexto_convers
             if ok:
                 return {"ok": True, "mensaje": f"Listo, quite al numero {tel} de la blacklist. Sandra le volvera a responder."}
             return {"ok": False, "mensaje": f"El numero {tel} no estaba en la blacklist."}
+
+        elif nombre == "consultar_estatus_expediente":
+            return tool_consultar_estatus_expediente(params.get("nombre_cliente", ""))
+        elif nombre == "marcar_documento_recibido":
+            return tool_marcar_documento_recibido(
+                nombre_cliente=params.get("nombre_cliente", ""),
+                documento=params.get("documento", "")
+            )
 
         else:
             return {"error": f"Herramienta desconocida: {nombre}"}
