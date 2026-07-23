@@ -2281,8 +2281,8 @@ def health():
         conn.close()
     return jsonify({
         "status": "ok",
-        "agent": "Sandra V2.2",
-        "version": "2.2.0",
+        "agent": "Sandra V2.3",
+        "version": "2.3.0",
         "modos": ["agente", "asistente"],
         "database": "connected" if db_ok else "disconnected",
         "tools_agente": len(TOOLS_AGENTE),
