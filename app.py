@@ -1619,6 +1619,13 @@ Escala a Salvador inmediatamente cuando:
 - Pregunta por propiedades que no estan en BD
 - Pide hablar con humano
 
+## CLIENTE EXISTENTE (YA COMPRO) - CRITICO
+Si el mensaje menciona señales de que la persona YA es dueño de un departamento (no es un lead nuevo) - por ejemplo: "garantia", "mi departamento", "ya compre", "entrega de llaves", "una falla", "se me esta goteando", "el piso/pared/puerta de mi depa", "escrituras ya firmadas", o cualquier tema de post-venta:
+1. NO ofrezcas Castaña ni ningun otro inventario. NO lances el pitch de ventas.
+2. NO uses consultar_inventario ni evaluar_credito.
+3. Responde breve y amable: "Claro, en un momento te atiende Salvador directamente para ver tu caso."
+4. Usa escalar_a_salvador con motivo "tema_complejo" y en el resumen aclara explicitamente que es un cliente existente con un tema de post-venta (no un lead nuevo).
+
 ## REGLAS CRITICAS
 1. NUNCA inventes datos. NUNCA memorices precios. Siempre consulta la BD.
 2. NUNCA te presentes de nuevo si ya hay historial.
@@ -1736,6 +1743,21 @@ def chat():
         or str(data.get("message_type", "")).lower() in ("outgoing", "outbound")
     )
     if es_saliente:
+        # PRIMERO: ¿es el comando de reanudar (▶️ solo)? Esto tiene prioridad
+        # sobre la pausa automática - si Salvador manda ▶️, siempre reanuda,
+        # nunca se interpreta como "escritura manual que debe pausar".
+        if es_comando_reanudar(mensaje_usuario):
+            if conversation_id:
+                reanudar_sandra_para(conversation_id)
+            else:
+                reanudar_sandra_para(f"user_{usuario_id}")
+            print(f"[REANUDA] Comando ▶️ (saliente) recibido para usuario={usuario_id}")
+            return jsonify({
+                "respuesta": "",
+                "ignorar": True,
+                "motivo_ignorar": "comando_reanudar_sandra"
+            })
+
         # ¿Este mensaje saliente tiene la marca invisible de Sandra?
         # Si NO la tiene, alguien (Salvador) escribio a mano desde este numero
         # -> pausamos Sandra para esta conversacion automaticamente.
