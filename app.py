@@ -41,6 +41,11 @@ client = Anthropic(api_key=ANTHROPIC_API_KEY)
 # Telefono del numero de WhatsApp de Sandra (para identificacion)
 SANDRA_PHONE = os.getenv("SANDRA_PHONE", "5213310977722")
 
+# Marca invisible (zero-width space) que Sandra agrega al final de CADA mensaje
+# que le manda a un cliente. Sirve para distinguir sus mensajes automaticos de
+# los que Salvador escribe a mano desde el mismo numero - ver FILTRO OUTBOUND.
+SANDRA_MARKER = "\u200b"
+
 # Telefono de Salvador (admin) - recibe notificaciones
 ADMIN_PHONE = os.getenv("ADMIN_PHONE", "5213334969274")
 
@@ -295,10 +300,12 @@ def reanudar_sandra_para(conversation_id):
 
 
 def es_comando_reanudar(mensaje):
-    """Detecta si el mensaje es 'adelante Sandra' (case insensitive)"""
+    """Detecta el comando discreto para reanudar a Sandra en una conversacion.
+    Se uso un emoji en vez de texto (ej. 'adelante Sandra') para que si el
+    cliente llega a ver el mensaje de Salvador, no genere confusion."""
     if not mensaje:
         return False
-    return mensaje.strip().lower().startswith("adelante sandra")
+    return mensaje.strip() == "▶️"
 
 
 def get_historial_conversacion(usuario_id, limite=20):
@@ -1542,7 +1549,15 @@ Llevar al cliente desde primer contacto hasta AGENDAR VISITA. Tu producto estrel
 
 ## PRECIOS (CRITICO)
 NUNCA cotices un precio de memoria. SIEMPRE consulta con consultar_inventario o evaluar_credito primero.
-Las escrituras son $20,000 (no negociables, las cobra el notario).
+El costo de escrituras varia por nivel y ya esta incluido en precio_con_escrituras que te regresa la base de datos - NUNCA asumas un monto fijo de escrituras, siempre usa el precio_con_escrituras exacto que te dio la tool.
+
+## FORMATO DE MENSAJES (CRITICO - WhatsApp no soporta tablas)
+NUNCA uses tablas en formato Markdown (simbolos | y guiones) para presentar precios ni ningun otro dato - en WhatsApp se ven rotos, como texto plano con simbolos sueltos.
+Para presentar precios por nivel, usa SIEMPRE una lista simple con emojis, por ejemplo:
+🏠 *Planta baja:* $818,000
+🏠 *Primer nivel:* $713,000
+🏠 *Segundo nivel:* $703,000
+Puedes usar *negritas* (asteriscos), _cursivas_ (guion bajo) y listas con viñetas o emojis - eso si funciona en WhatsApp. NUNCA uses tablas, encabezados con #, ni bloques de codigo con ```.
 
 ## FOTOS DEL DEPARTAMENTO 📸
 Tienes 16 fotos de Castaña (fachada, sala, cocina, recamaras, patio, rutas de camion, precios).
@@ -1721,6 +1736,16 @@ def chat():
         or str(data.get("message_type", "")).lower() in ("outgoing", "outbound")
     )
     if es_saliente:
+        # ¿Este mensaje saliente tiene la marca invisible de Sandra?
+        # Si NO la tiene, alguien (Salvador) escribio a mano desde este numero
+        # -> pausamos Sandra para esta conversacion automaticamente.
+        tiene_marca = SANDRA_MARKER in str(mensaje_usuario)
+        if not tiene_marca:
+            if conversation_id:
+                pausar_sandra_para(conversation_id, usuario_id, "Salvador escribio manualmente (deteccion automatica)")
+            else:
+                pausar_sandra_para(f"user_{usuario_id}", usuario_id, "Salvador escribio manualmente (deteccion automatica)")
+            print(f"[PAUSA-AUTO] Mensaje manual detectado de Salvador para usuario={usuario_id}, pausando")
         return jsonify({
             "respuesta": "",
             "ignorar": True,
@@ -1749,12 +1774,12 @@ def chat():
         })
 
     # ============================================================
-    # FILTRO 0: ¿Es comando "adelante Sandra"? -> REANUDAR
+    # FILTRO 0: ¿Es comando de reanudar (emoji ▶️)? -> REANUDAR
     # ============================================================
     if es_comando_reanudar(mensaje_usuario):
         if conversation_id:
             reanudar_sandra_para(conversation_id)
-            print(f"[REANUDA] Comando 'adelante Sandra' en conv={conversation_id}")
+            print(f"[REANUDA] Comando ▶️ recibido en conv={conversation_id}")
         return jsonify({
             "respuesta": "",
             "ignorar": True,
@@ -1986,8 +2011,13 @@ def chat_modo_agente(usuario_id, mensaje_usuario, historial_previo, conversation
             respuesta_final = "Disculpa, dame un momento mientras reviso tu informacion."
             break
 
+    # Marca invisible al final de la respuesta: permite distinguir mensajes
+    # automaticos de Sandra vs. mensajes que Salvador escriba a mano despues
+    # (ver FILTRO OUTBOUND en chat()). No es visible para el cliente.
+    respuesta_con_marca = (respuesta_final or "Disculpa, dame un momento.") + SANDRA_MARKER
+
     return jsonify({
-        "respuesta": respuesta_final or "Disculpa, dame un momento.",
+        "respuesta": respuesta_con_marca,
         "modo": "agente",
         "lead_calificado": lead_calificado,
         "datos_lead": datos_lead_final,
